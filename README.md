@@ -85,6 +85,8 @@ Processor 1, Task T2 processed
 ```
 
 A real-time plot of CPU utilization will be displayed simultaneously.
+![Figure_1](https://github.com/qzaleh/RealTimeSMT/assets/87320903/fe6bc4c9-36df-46ac-824d-dcd7e63bb17c)
+
 
 ## License
 
@@ -94,4 +96,3 @@ This project is licensed under the MIT License. See the [LICENSE](LICENSE) file 
 
 This project was inspired by real-time operating systems and scheduling algorithms. Special thanks to the developers of `matplotlib` for providing the tools for visualization.
 
-```
