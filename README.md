@@ -18,7 +18,7 @@ This project simulates task scheduling using the Earliest Deadline First (EDF) a
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/yourusername/taskscheduling-simulation.git
+   git clone https://github.com/qzaleh/RealTimeSMT.git
 Navigate to the project directory:
 bash
 Copy code
