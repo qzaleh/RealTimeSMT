@@ -2,6 +2,8 @@ import threading
 import queue
 import time
 from collections import deque
+import matplotlib.pyplot as plt
+from matplotlib.animation import FuncAnimation
 
 # Define resources with mutexes for mutual exclusion
 resource_locks = {}
@@ -40,6 +42,7 @@ class Processor:
         self.thread = None
         self.utilization = 0
         self.running_task = None
+        self.utilization_history = deque(maxlen=100)
 
 
 def is_schedulable(task, processor):
@@ -153,6 +156,9 @@ def worker(processor, stop_event, scheduling_algo):
             task.deadline = time.time() + task.period
             task.remaining_time = task.execution_time
             processor.ready_queue.put(task)
+        else:
+            processor.utilization = max(processor.utilization - (task.execution_time / task.period), 0)
+
         processor.running_task = None
         processor.ready_queue.task_done()
 
@@ -192,8 +198,12 @@ def main_thread(processors, stop_event, scheduling_algo):
 
         time.sleep(1)
 
-        # Check if all queues are empty to stop the execution
-        if all(p.ready_queue.empty() for p in processors) and waiting_queue_edf.empty() and not waiting_queue_rms:
+        # Update utilization history for plotting
+        for processor in processors:
+            processor.utilization_history.append(processor.utilization)
+
+        # Check if all queues are empty and no tasks are running to stop the execution
+        if all(p.ready_queue.empty() and p.running_task is None for p in processors) and waiting_queue_edf.empty() and not waiting_queue_rms:
             stop_event.set()
 
     for processor in processors:
@@ -220,6 +230,33 @@ def print_status(processors):
         print(f"Running Task: {running_task}")
 
 
+def plot_utilization(processors, stop_event):
+    fig, ax = plt.subplots()
+    lines = [ax.plot([], [], label=f'CPU {p.processor_id + 1}')[0] for p in processors]
+
+    ax.set_xlim(0, 100)
+    ax.set_ylim(0, 100)
+    ax.set_xlabel('Time')
+    ax.set_ylabel('Utilization (%)')
+    ax.legend()
+
+    def init():
+        for line in lines:
+            line.set_data([], [])
+        return lines
+
+    def update(frame):
+        for line, processor in zip(lines, processors):
+            utilization_data = list(processor.utilization_history)
+            line.set_data(range(len(utilization_data)), [u * 100 for u in utilization_data])
+        return lines
+
+    ani = FuncAnimation(fig, update, init_func=init, blit=True, interval=1000)
+    plt.show()
+
+    stop_event.set()  # Stop the main thread when the plot window is closed
+
+
 def main():
     input_resources = "R3:2 R2:4 R1:3"
     input_tasks = [
@@ -229,12 +266,10 @@ def main():
         "T4,50,2,1,1,0,0,3",
         "T5,60,3,0,2,1,1,2",
     ]
-    scheduling_algo = 'EDF'  # Change to 'RMS' for Rate-Monotonic Scheduling
-
-    global resource_locks, available_resources
-
+    scheduling_algo = 'EDF'
     # Parse resources
-    for resource in input_resources.split():
+    resources = input_resources.split()
+    for resource in resources:
         res, count = resource.split(':')
         resource_locks[res] = threading.Lock()
         available_resources[res] = int(count)
@@ -261,6 +296,10 @@ def main():
     main_thread_thread = threading.Thread(target=main_thread, args=(processors, stop_event, scheduling_algo))
     main_thread_thread.start()
 
+    # Start the plotting thread
+    plot_thread = threading.Thread(target=plot_utilization, args=(processors, stop_event))
+    plot_thread.start()
+
     try:
         while main_thread_thread.is_alive():
             print_status(processors)
@@ -269,6 +308,7 @@ def main():
         stop_event.set()
 
     main_thread_thread.join()
+    plot_thread.join()
 
     # Print final resource status and queues
     print_status(processors)
