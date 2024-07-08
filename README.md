@@ -1,4 +1,3 @@
-```markdown
 # Task Scheduling Simulation
 
 This project simulates task scheduling using the Earliest Deadline First (EDF) and Rate Monotonic Scheduling (RMS) algorithms. The simulation involves multiple processors and tasks that require resources, and it visualizes CPU utilization over time.
