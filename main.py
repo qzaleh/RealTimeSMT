@@ -8,11 +8,15 @@ from matplotlib.animation import FuncAnimation
 # Define resources with mutexes for mutual exclusion
 resource_locks = {}
 available_resources = {}
+resource_access_lock = threading.Lock()
 
-# Shared waiting queue for EDF
+# Shared waiting queue for EDF with mutex
 waiting_queue_edf = queue.PriorityQueue()
-# Shared waiting queue for RMS
+waiting_queue_edf_lock = threading.Lock()
+
+# Shared waiting queue for RMS with mutex
 waiting_queue_rms = deque()
+waiting_queue_rms_lock = threading.Lock()
 
 
 # Define task structure
@@ -63,9 +67,11 @@ def assign_tasks_to_processors(tasks, processors, scheduling_algo):
 
     for task in unschedulable_tasks:
         if scheduling_algo == 'EDF':
-            waiting_queue_edf.put(task)
+            with waiting_queue_edf_lock:
+                waiting_queue_edf.put(task)
         elif scheduling_algo == 'RMS':
-            waiting_queue_rms.append(task)
+            with waiting_queue_rms_lock:
+                waiting_queue_rms.append(task)
 
 
 def reassign_tasks(processors, scheduling_algo):
@@ -74,21 +80,23 @@ def reassign_tasks(processors, scheduling_algo):
         if processor.utilization < 0.5:  # Example threshold for low utilization
             # First, try to get tasks from the waiting queue
             if scheduling_algo == 'EDF':
-                if not waiting_queue_edf.empty():
-                    task = waiting_queue_edf.get()
-                    if is_schedulable(task, processor):
-                        processor.ready_queue.put(task)
-                        processor.utilization += (task.execution_time / task.period)
-                    else:
-                        waiting_queue_edf.put(task)
+                with waiting_queue_edf_lock:
+                    if not waiting_queue_edf.empty():
+                        task = waiting_queue_edf.get()
+                        if is_schedulable(task, processor):
+                            processor.ready_queue.put(task)
+                            processor.utilization += (task.execution_time / task.period)
+                        else:
+                            waiting_queue_edf.put(task)
             elif scheduling_algo == 'RMS':
-                if waiting_queue_rms:
-                    task = waiting_queue_rms.popleft()
-                    if is_schedulable(task, processor):
-                        processor.ready_queue.put(task)
-                        processor.utilization += (task.execution_time / task.period)
-                    else:
-                        waiting_queue_rms.append(task)
+                with waiting_queue_rms_lock:
+                    if waiting_queue_rms:
+                        task = waiting_queue_rms.popleft()
+                        if is_schedulable(task, processor):
+                            processor.ready_queue.put(task)
+                            processor.utilization += (task.execution_time / task.period)
+                        else:
+                            waiting_queue_rms.append(task)
 
             # Then, try to steal tasks from highly utilized processors
             for other_processor in processors:
@@ -119,22 +127,26 @@ def worker(processor, stop_event, scheduling_algo):
             'R3': task.resource_three_usage
         }
 
-        for resource, amount in resource_usage.items():
-            if amount > 0:
-                if not resource_locks[resource].acquire(blocking=False):
-                    resources_acquired = False
-                    break
-                acquired_resources.append(resource)
-                available_resources[resource] -= amount
+        with resource_access_lock:
+            for resource, amount in resource_usage.items():
+                if amount > 0:
+                    if not resource_locks[resource].acquire(blocking=False):
+                        resources_acquired = False
+                        break
+                    acquired_resources.append(resource)
+                    available_resources[resource] -= amount
 
         if not resources_acquired:
-            for r in acquired_resources:
-                resource_locks[r].release()
-                available_resources[r] += resource_usage[r]
+            with resource_access_lock:
+                for r in acquired_resources:
+                    resource_locks[r].release()
+                    available_resources[r] += resource_usage[r]
             if scheduling_algo == 'EDF':
-                waiting_queue_edf.put(task)
+                with waiting_queue_edf_lock:
+                    waiting_queue_edf.put(task)
             elif scheduling_algo == 'RMS':
-                waiting_queue_rms.append(task)
+                with waiting_queue_rms_lock:
+                    waiting_queue_rms.append(task)
             processor.ready_queue.task_done()
             continue
 
@@ -147,9 +159,10 @@ def worker(processor, stop_event, scheduling_algo):
 
         print(f"Processor {processor.processor_id}, Task {task.name} processed")
 
-        for resource in acquired_resources:
-            resource_locks[resource].release()
-            available_resources[resource] += resource_usage[resource]
+        with resource_access_lock:
+            for resource in acquired_resources:
+                resource_locks[resource].release()
+                available_resources[resource] += resource_usage[resource]
 
         task.repeat_count -= 1
         if task.repeat_count > 0:
@@ -173,25 +186,27 @@ def main_thread(processors, stop_event, scheduling_algo):
     while not stop_event.is_set():
         # Move tasks from waiting queue to ready queues of processors
         if scheduling_algo == 'EDF':
-            while not waiting_queue_edf.empty():
-                task = waiting_queue_edf.get()
-                processor = processors[task.processor_dest_id]
-                if is_schedulable(task, processor):
-                    processor.ready_queue.put(task)
-                    processor.utilization += (task.execution_time / task.period)
-                else:
-                    waiting_queue_edf.put(task)
-                    break
+            with waiting_queue_edf_lock:
+                while not waiting_queue_edf.empty():
+                    task = waiting_queue_edf.get()
+                    processor = processors[task.processor_dest_id]
+                    if is_schedulable(task, processor):
+                        processor.ready_queue.put(task)
+                        processor.utilization += (task.execution_time / task.period)
+                    else:
+                        waiting_queue_edf.put(task)
+                        break
         elif scheduling_algo == 'RMS':
-            while waiting_queue_rms:
-                task = waiting_queue_rms.popleft()
-                processor = processors[task.processor_dest_id]
-                if is_schedulable(task, processor):
-                    processor.ready_queue.put(task)
-                    processor.utilization += (task.execution_time / task.period)
-                else:
-                    waiting_queue_rms.append(task)
-                    break
+            with waiting_queue_rms_lock:
+                while waiting_queue_rms:
+                    task = waiting_queue_rms.popleft()
+                    processor = processors[task.processor_dest_id]
+                    if is_schedulable(task, processor):
+                        processor.ready_queue.put(task)
+                        processor.utilization += (task.execution_time / task.period)
+                    else:
+                        waiting_queue_rms.append(task)
+                        break
 
         # Perform load balancing
         reassign_tasks(processors, scheduling_algo)
@@ -211,9 +226,12 @@ def main_thread(processors, stop_event, scheduling_algo):
 
 
 def print_status(processors):
-    resource_status = ' '.join([f"{res}:{count}" for res, count in available_resources.items()])
-    waiting_tasks_edf = list(waiting_queue_edf.queue)
-    waiting_tasks_rms = list(waiting_queue_rms)
+    with resource_access_lock:
+        resource_status = ' '.join([f"{res}:{count}" for res, count in available_resources.items()])
+    with waiting_queue_edf_lock:
+        waiting_tasks_edf = list(waiting_queue_edf.queue)
+    with waiting_queue_rms_lock:
+        waiting_tasks_rms = list(waiting_queue_rms)
     waiting_tasks_str_edf = ', '.join([t.name for t in waiting_tasks_edf])
     waiting_tasks_str_rms = ', '.join([t.name for t in waiting_tasks_rms])
     print(
